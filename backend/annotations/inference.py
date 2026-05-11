@@ -113,7 +113,7 @@ def _translate_part(label):
     return mapping.get(label, label.lower())
 
 
-def predictions_for_item(item, task, model_id=None):
+def predictions_for_item(item, task, model_id=None, confidence_threshold=0):
     task_config = MODEL_REGISTRY[task]
     runtime = detect_device()
     outputs = []
@@ -124,6 +124,7 @@ def predictions_for_item(item, task, model_id=None):
             predictions = _part_predictions(item, model, model_index)
         else:
             predictions = _damage_predictions(item, model, model_index)
+        predictions = [prediction for prediction in predictions if prediction["confidence"] >= confidence_threshold]
         outputs.append(
             {
                 "model": model,

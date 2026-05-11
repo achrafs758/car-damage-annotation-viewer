@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 db.sqlite3
+backend/media/uploads/
 
 # Node
 node_modules/

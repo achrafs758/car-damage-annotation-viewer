@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Boxes,
   ChevronLeft,
@@ -53,8 +53,11 @@ export function App() {
   const [showBoxes, setShowBoxes] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [opacity, setOpacity] = useState(45);
+  const [threshold, setThreshold] = useState(50);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "dark");
   const [uploading, setUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -81,10 +84,12 @@ export function App() {
     const needle = query.trim().toLowerCase();
     if (!activeOutput) return [];
     return activeOutput.predictions.filter((prediction) => {
+      const aboveThreshold = prediction.confidence >= threshold / 100;
+      if (!aboveThreshold) return false;
       if (!needle) return true;
       return prediction.category.toLowerCase().includes(needle) || String(prediction.id).toLowerCase().includes(needle);
     });
-  }, [activeOutput, query]);
+  }, [activeOutput, query, threshold]);
 
   const selectedPrediction = visiblePredictions.find((prediction) => prediction.id === selectedId) ?? visiblePredictions[0];
 
@@ -95,8 +100,33 @@ export function App() {
     setResult(null);
   }, [task]);
 
+  const submitUpload = useCallback(async (file) => {
+    setUploading(true);
+    const body = new FormData();
+    body.append("image", file);
+    body.append("task", task);
+    if (modelId !== "all") body.append("model", modelId);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/api/upload-predict/`, { method: "POST", body });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Import impossible");
+      setResult({ ...payload, outputs: payload.outputs.map(decorate) });
+      setSelectedModel(payload.outputs[0]?.model.id ?? null);
+      setSelectedId(null);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setUploading(false);
+    }
+  }, [modelId, task]);
+
   useEffect(() => {
     if (!dataset || !registry) return;
+    if (uploadedFile) {
+      submitUpload(uploadedFile);
+      return;
+    }
     const imageId = dataset.items?.[activeIndex]?.id;
     if (!imageId) return;
     const params = new URLSearchParams({ task, image_id: String(imageId) });
@@ -108,36 +138,35 @@ export function App() {
         setSelectedModel(payload.outputs[0]?.model.id ?? null);
         setSelectedId(null);
       });
-  }, [activeIndex, dataset, modelId, registry, task]);
+  }, [activeIndex, dataset, modelId, registry, submitUpload, task, uploadedFile]);
 
   async function runPrediction(nextImageId = dataset?.items?.[activeIndex]?.id) {
-    const params = new URLSearchParams({ task, image_id: String(nextImageId) });
+    const params = new URLSearchParams({ task, image_id: String(nextImageId), threshold: String(threshold / 100) });
     if (modelId !== "all") params.set("model", modelId);
-    const response = await fetch(`${API_URL}/api/predictions/?${params}`);
-    const payload = await response.json();
-    setResult({ ...payload, outputs: payload.outputs.map(decorate) });
-    setSelectedModel(payload.outputs[0]?.model.id ?? null);
-    setSelectedId(null);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/api/predictions/?${params}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Prediction impossible");
+      setResult({ ...payload, outputs: payload.outputs.map(decorate) });
+      setSelectedModel(payload.outputs[0]?.model.id ?? null);
+      setSelectedId(null);
+    } catch (caught) {
+      setError(caught.message);
+    }
   }
 
   async function uploadImage(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setUploading(true);
-    const body = new FormData();
-    body.append("image", file);
-    body.append("task", task);
-    if (modelId !== "all") body.append("model", modelId);
-    const response = await fetch(`${API_URL}/api/upload-predict/`, { method: "POST", body });
-    const payload = await response.json();
-    setResult({ ...payload, outputs: payload.outputs.map(decorate) });
-    setSelectedModel(payload.outputs[0]?.model.id ?? null);
-    setUploading(false);
+    setUploadedFile(file);
+    event.target.value = "";
   }
 
   function moveImage(direction) {
     if (!dataset?.items?.length) return;
     const next = (activeIndex + direction + dataset.items.length) % dataset.items.length;
+    setUploadedFile(null);
     setActiveIndex(next);
     setResult(null);
     setSelectedId(null);
@@ -188,12 +217,13 @@ export function App() {
             <span>{activeIndex + 1} / {dataset.items.length}</span>
             <button title="Image suivante" onClick={() => moveImage(1)}><ChevronRight size={17} /></button>
           </div>
-          <button className="primary" onClick={() => runPrediction()}><Play size={16} /> Lancer la prediction</button>
+          <button className="primary" onClick={() => (uploadedFile ? submitUpload(uploadedFile) : runPrediction())}><Play size={16} /> Lancer la prediction</button>
           <label className="upload-button">
             <Upload size={16} />
             {uploading ? "Analyse..." : "Importer une image"}
             <input type="file" accept="image/*" onChange={uploadImage} />
           </label>
+          {error && <p className="error">{error}</p>}
         </section>
 
         <section className="panel">
@@ -209,6 +239,7 @@ export function App() {
           <label><input type="checkbox" checked={showMasks} onChange={(event) => setShowMasks(event.target.checked)} /> Masques</label>
           <label><input type="checkbox" checked={showBoxes} onChange={(event) => setShowBoxes(event.target.checked)} /> Boites</label>
           <label><input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} /> Etiquettes</label>
+          <label>Seuil confiance <strong>{threshold}%</strong><input type="range" min="0" max="95" step="5" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} /></label>
           <label>Opacite <input type="range" min="10" max="90" value={opacity} onChange={(event) => setOpacity(Number(event.target.value))} /></label>
         </section>
       </aside>
@@ -231,7 +262,7 @@ export function App() {
           {outputs.length ? outputs.map((output) => (
             <button key={output.model.id} className={activeOutput?.model.id === output.model.id ? "model-card active" : "model-card"} onClick={() => setSelectedModel(output.model.id)}>
               <strong>{output.model.name}</strong>
-              <span>{output.count} predictions - {output.runtime.device}</span>
+              <span>{output.predictions.filter((prediction) => prediction.confidence >= threshold / 100).length} predictions - {output.runtime.device}</span>
             </button>
           )) : currentModels.map((model) => (
             <article key={model.id} className="model-card idle">

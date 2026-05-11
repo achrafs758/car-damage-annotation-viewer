@@ -156,6 +156,15 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   align-items: center;
   gap: 7px;
 }
+.error {
+  margin: 0;
+  color: #f87171;
+  font-size: 13px;
+}
+.panel label strong {
+  color: var(--text);
+  font-weight: 700;
+}
 
 .workspace {
   display: grid;
