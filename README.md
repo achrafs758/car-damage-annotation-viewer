@@ -10,6 +10,8 @@ The demo is seeded from the Hugging Face dataset [`moondream/car_part_damage`](h
 - React 19 + Vite
 - SVG annotation overlay with zoom, pan, filtering, selection, and style controls
 - GitHub Actions CI for backend and frontend checks
+- French demo workflow for two inference tasks: car-part segmentation and damage segmentation
+- Model registry with four model candidates per task, model classes, source URLs, dataset provenance, and GPU-first runtime metadata
 
 ## Run Locally
 
@@ -34,3 +36,14 @@ Open http://127.0.0.1:5173.
 ## Dataset
 
 The sample fixture lives in `backend/media/samples/annotations.json`, with downloaded image assets in `backend/media/samples/images`.
+
+## Inference Demo
+
+The current demo exposes:
+
+- `GET /api/models/` for the model registry.
+- `GET /api/predictions/?task=car_parts&image_id=1` for four car-part model outputs.
+- `GET /api/predictions/?task=damage&image_id=1` for four damage model outputs.
+- `POST /api/upload-predict/` for uploaded-image demo predictions.
+
+The backend prefers GPU metadata when `torch.cuda.is_available()` is true, otherwise it reports CPU. The current committed predictions are deterministic demo masks/logits derived from the seeded annotation geometry, so CI stays lightweight and the app works without downloading large model weights.

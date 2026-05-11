@@ -1,56 +1,60 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Box,
+  Boxes,
   ChevronLeft,
   ChevronRight,
+  Cpu,
   Eye,
   EyeOff,
+  Gauge,
+  ImagePlus,
   Layers,
-  Maximize2,
   Moon,
-  Move,
+  Play,
   RefreshCw,
   Search,
   Sun,
-  Tags
+  Upload
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
-const palette = ["#2dd4bf", "#f97316", "#60a5fa", "#e879f9", "#a3e635", "#f43f5e", "#facc15", "#38bdf8"];
+const colors = ["#2dd4bf", "#f97316", "#60a5fa", "#e879f9", "#a3e635", "#f43f5e", "#facc15", "#38bdf8"];
 
-function toPoints(segmentation) {
-  if (!segmentation?.length) return "";
-  return segmentation[0].reduce((pairs, value, index) => {
-    if (index % 2 === 0) pairs.push(`${value},${segmentation[0][index + 1]}`);
+function points(segmentation) {
+  const polygon = segmentation?.[0];
+  if (!Array.isArray(polygon)) return "";
+  return polygon.reduce((pairs, value, index) => {
+    if (index % 2 === 0) pairs.push(`${value},${polygon[index + 1]}`);
     return pairs;
   }, []).join(" ");
 }
 
-function normalizeItem(item) {
+function decorate(output, modelIndex) {
   return {
-    ...item,
-    annotations: item.annotations.map((annotation, index) => ({
-      ...annotation,
-      color: palette[index % palette.length],
-      visible: true
+    ...output,
+    predictions: output.predictions.map((prediction, index) => ({
+      ...prediction,
+      color: colors[(index + modelIndex) % colors.length]
     }))
   };
 }
 
 export function App() {
   const [dataset, setDataset] = useState(null);
+  const [registry, setRegistry] = useState(null);
+  const [task, setTask] = useState("car_parts");
+  const [modelId, setModelId] = useState("all");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [result, setResult] = useState(null);
+  const [selectedModel, setSelectedModel] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [query, setQuery] = useState("");
+  const [showMasks, setShowMasks] = useState(true);
   const [showBoxes, setShowBoxes] = useState(true);
-  const [showPolygons, setShowPolygons] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
-  const [opacity, setOpacity] = useState(42);
-  const [strokeWidth, setStrokeWidth] = useState(2);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [opacity, setOpacity] = useState(45);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "dark");
-  const [hiddenCategories, setHiddenCategories] = useState(new Set());
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -58,53 +62,89 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/annotations/`)
-      .then((response) => {
-        if (!response.ok) throw new Error("Unable to load annotations");
-        return response.json();
-      })
-      .then((payload) => setDataset({ ...payload, items: payload.items.map(normalizeItem) }))
-      .catch(() => setDataset({ source: "Unavailable", items: [] }));
+    Promise.all([
+      fetch(`${API_URL}/api/annotations/`).then((response) => response.json()),
+      fetch(`${API_URL}/api/models/`).then((response) => response.json())
+    ]).then(([samples, models]) => {
+      setDataset(samples);
+      setRegistry(models);
+    });
   }, []);
 
-  const active = dataset?.items[activeIndex];
-  const categories = useMemo(() => {
-    if (!dataset) return [];
-    return [...new Set(dataset.items.flatMap((item) => item.annotations.map((annotation) => annotation.category)))].sort();
-  }, [dataset]);
+  const activeImage = result?.image ?? dataset?.items?.[activeIndex];
+  const taskConfig = registry?.tasks?.[task];
+  const currentModels = taskConfig?.models ?? [];
+  const outputs = useMemo(() => (result?.outputs ?? []).map(decorate), [result]);
+  const activeOutput = outputs.find((output) => output.model.id === selectedModel) ?? outputs[0];
 
-  const visibleAnnotations = useMemo(() => {
-    if (!active) return [];
+  const visiblePredictions = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return active.annotations.filter((annotation) => {
-      const matchesText = !needle || annotation.category.toLowerCase().includes(needle) || String(annotation.id).includes(needle);
-      return matchesText && !hiddenCategories.has(annotation.category);
+    if (!activeOutput) return [];
+    return activeOutput.predictions.filter((prediction) => {
+      if (!needle) return true;
+      return prediction.category.toLowerCase().includes(needle) || String(prediction.id).toLowerCase().includes(needle);
     });
-  }, [active, hiddenCategories, query]);
+  }, [activeOutput, query]);
 
-  const selected = visibleAnnotations.find((annotation) => annotation.id === selectedId) ?? visibleAnnotations[0];
+  const selectedPrediction = visiblePredictions.find((prediction) => prediction.id === selectedId) ?? visiblePredictions[0];
+
+  useEffect(() => {
+    setModelId("all");
+    setSelectedModel(null);
+    setSelectedId(null);
+    setResult(null);
+  }, [task]);
+
+  useEffect(() => {
+    if (!dataset || !registry) return;
+    const imageId = dataset.items?.[activeIndex]?.id;
+    if (!imageId) return;
+    const params = new URLSearchParams({ task, image_id: String(imageId) });
+    if (modelId !== "all") params.set("model", modelId);
+    fetch(`${API_URL}/api/predictions/?${params}`)
+      .then((response) => response.json())
+      .then((payload) => {
+        setResult({ ...payload, outputs: payload.outputs.map(decorate) });
+        setSelectedModel(payload.outputs[0]?.model.id ?? null);
+        setSelectedId(null);
+      });
+  }, [activeIndex, dataset, modelId, registry, task]);
+
+  async function runPrediction(nextImageId = dataset?.items?.[activeIndex]?.id) {
+    const params = new URLSearchParams({ task, image_id: String(nextImageId) });
+    if (modelId !== "all") params.set("model", modelId);
+    const response = await fetch(`${API_URL}/api/predictions/?${params}`);
+    const payload = await response.json();
+    setResult({ ...payload, outputs: payload.outputs.map(decorate) });
+    setSelectedModel(payload.outputs[0]?.model.id ?? null);
+    setSelectedId(null);
+  }
+
+  async function uploadImage(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const body = new FormData();
+    body.append("image", file);
+    body.append("task", task);
+    if (modelId !== "all") body.append("model", modelId);
+    const response = await fetch(`${API_URL}/api/upload-predict/`, { method: "POST", body });
+    const payload = await response.json();
+    setResult({ ...payload, outputs: payload.outputs.map(decorate) });
+    setSelectedModel(payload.outputs[0]?.model.id ?? null);
+    setUploading(false);
+  }
 
   function moveImage(direction) {
-    setActiveIndex((current) => {
-      const next = (current + direction + dataset.items.length) % dataset.items.length;
-      setSelectedId(null);
-      setPan({ x: 0, y: 0 });
-      setZoom(1);
-      return next;
-    });
+    if (!dataset?.items?.length) return;
+    const next = (activeIndex + direction + dataset.items.length) % dataset.items.length;
+    setActiveIndex(next);
+    setResult(null);
+    setSelectedId(null);
   }
 
-  function toggleCategory(category) {
-    setHiddenCategories((current) => {
-      const next = new Set(current);
-      if (next.has(category)) next.delete(category);
-      else next.add(category);
-      return next;
-    });
-  }
-
-  if (!dataset) {
-    return <main className="loading">Loading annotation workspace...</main>;
+  if (!dataset || !registry) {
+    return <main className="loading">Chargement du studio IA...</main>;
   }
 
   return (
@@ -113,109 +153,107 @@ export function App() {
         <div className="brand">
           <div className="brand-mark"><Layers size={22} /></div>
           <div>
-            <strong>Damage Studio</strong>
-            <span>Annotation review</span>
+            <strong>Studio Sinistre Auto</strong>
+            <span>Segmentation IA assistee</span>
           </div>
         </div>
 
-        <label className="search">
-          <Search size={17} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find category or id" />
-        </label>
+        <section className="panel">
+          <div className="panel-title"><Boxes size={16} /> Tache</div>
+          <div className="task-tabs">
+            <button className={task === "car_parts" ? "active" : ""} onClick={() => setTask("car_parts")}>Pieces</button>
+            <button className={task === "damage" ? "active" : ""} onClick={() => setTask("damage")}>Dommages</button>
+          </div>
+          <p className="hint">{taskConfig.description}</p>
+        </section>
 
         <section className="panel">
-          <div className="panel-title"><Tags size={16} /> Classes</div>
-          <div className="class-list">
-            {categories.map((category) => (
-              <button key={category} className={hiddenCategories.has(category) ? "muted class-chip" : "class-chip"} onClick={() => toggleCategory(category)}>
-                {hiddenCategories.has(category) ? <EyeOff size={14} /> : <Eye size={14} />}
-                {category}
-              </button>
+          <div className="panel-title"><Cpu size={16} /> Modele</div>
+          <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
+            <option value="all">Comparer les 4 modeles</option>
+            {currentModels.map((model) => (
+              <option key={model.id} value={model.id}>{model.name}</option>
             ))}
+          </select>
+          <div className="runtime">
+            <Gauge size={15} />
+            Execution par defaut : {registry.runtime.gpu_available ? "GPU cuda:0" : "CPU"}.
           </div>
         </section>
 
         <section className="panel">
-          <div className="panel-title"><Box size={16} /> Selected</div>
-          {selected ? (
-            <dl className="metrics">
-              <div><dt>Class</dt><dd>{selected.category}</dd></div>
-              <div><dt>ID</dt><dd>{selected.id}</dd></div>
-              <div><dt>Box</dt><dd>{selected.bbox.map(Math.round).join(", ")}</dd></div>
-            </dl>
-          ) : (
-            <p className="empty">No visible annotation.</p>
-          )}
+          <div className="panel-title"><ImagePlus size={16} /> Image</div>
+          <div className="image-nav">
+            <button title="Image precedente" onClick={() => moveImage(-1)}><ChevronLeft size={17} /></button>
+            <span>{activeIndex + 1} / {dataset.items.length}</span>
+            <button title="Image suivante" onClick={() => moveImage(1)}><ChevronRight size={17} /></button>
+          </div>
+          <button className="primary" onClick={() => runPrediction()}><Play size={16} /> Lancer la prediction</button>
+          <label className="upload-button">
+            <Upload size={16} />
+            {uploading ? "Analyse..." : "Importer une image"}
+            <input type="file" accept="image/*" onChange={uploadImage} />
+          </label>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title"><Search size={16} /> Filtre</div>
+          <label className="search">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Classe, id, piece..." />
+          </label>
+        </section>
+
+        <section className="panel">
+          <div className="panel-title"><Eye size={16} /> Affichage</div>
+          <label><input type="checkbox" checked={showMasks} onChange={(event) => setShowMasks(event.target.checked)} /> Masques</label>
+          <label><input type="checkbox" checked={showBoxes} onChange={(event) => setShowBoxes(event.target.checked)} /> Boites</label>
+          <label><input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} /> Etiquettes</label>
+          <label>Opacite <input type="range" min="10" max="90" value={opacity} onChange={(event) => setOpacity(Number(event.target.value))} /></label>
         </section>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <span className="eyebrow">{dataset.source}</span>
-            <h1>{active?.image_id ?? "No sample loaded"}</h1>
+            <span className="eyebrow">{taskConfig.label}</span>
+            <h1>{activeImage?.image_id ?? "Aucune image"}</h1>
           </div>
           <div className="topbar-actions">
-            <button title="Previous image" onClick={() => moveImage(-1)}><ChevronLeft size={18} /></button>
-            <span className="counter">{activeIndex + 1} / {dataset.items.length}</span>
-            <button title="Next image" onClick={() => moveImage(1)}><ChevronRight size={18} /></button>
-            <button title="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            <button title="Relancer" onClick={() => runPrediction()}><RefreshCw size={17} /> Relancer</button>
+            <button title="Theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
           </div>
         </header>
 
-        <div className="toolbar">
-          <label><input type="checkbox" checked={showPolygons} onChange={(event) => setShowPolygons(event.target.checked)} /> Polygons</label>
-          <label><input type="checkbox" checked={showBoxes} onChange={(event) => setShowBoxes(event.target.checked)} /> Boxes</label>
-          <label><input type="checkbox" checked={showLabels} onChange={(event) => setShowLabels(event.target.checked)} /> Labels</label>
-          <label>Opacity <input type="range" min="10" max="90" value={opacity} onChange={(event) => setOpacity(Number(event.target.value))} /></label>
-          <label>Stroke <input type="range" min="1" max="6" value={strokeWidth} onChange={(event) => setStrokeWidth(Number(event.target.value))} /></label>
-          <button title="Reset view" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}><RefreshCw size={16} /> Reset</button>
-          <button title="Fit image" onClick={() => setZoom(1)}><Maximize2 size={16} /> Fit</button>
+        <div className="model-strip">
+          {outputs.length ? outputs.map((output) => (
+            <button key={output.model.id} className={activeOutput?.model.id === output.model.id ? "model-card active" : "model-card"} onClick={() => setSelectedModel(output.model.id)}>
+              <strong>{output.model.name}</strong>
+              <span>{output.count} predictions - {output.runtime.device}</span>
+            </button>
+          )) : currentModels.map((model) => (
+            <article key={model.id} className="model-card idle">
+              <strong>{model.name}</strong>
+              <span>{model.architecture} - {model.status}</span>
+            </article>
+          ))}
         </div>
 
         <div className="stage-wrap">
-          {active && (
-            <div
-              className="stage"
-              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
-              onWheel={(event) => {
-                event.preventDefault();
-                setZoom((current) => Math.min(3, Math.max(0.45, current + (event.deltaY > 0 ? -0.08 : 0.08))));
-              }}
-            >
-              <img src={`${API_URL}${active.image_url}`} alt={active.image_id} draggable="false" />
-              <svg viewBox={`0 0 ${active.width} ${active.height}`} aria-label="Annotation overlay">
-                {visibleAnnotations.map((annotation) => {
-                  const [x1, y1, x2, y2] = annotation.bbox;
-                  const isSelected = selected?.id === annotation.id;
+          {activeImage && (
+            <div className="stage" style={{ aspectRatio: `${activeImage.width} / ${activeImage.height}` }}>
+              <img src={`${API_URL}${activeImage.image_url}`} alt={activeImage.image_id} draggable="false" />
+              <svg viewBox={`0 0 ${activeImage.width} ${activeImage.height}`} aria-label="Predictions IA">
+                {visiblePredictions.map((prediction) => {
+                  const [x1, y1, x2, y2] = prediction.bbox;
+                  const isSelected = selectedPrediction?.id === prediction.id;
                   return (
-                    <g key={annotation.id} onClick={() => setSelectedId(annotation.id)} className={isSelected ? "selected-shape" : ""}>
-                      {showPolygons && (
-                        <polygon
-                          points={toPoints(annotation.segmentation)}
-                          fill={annotation.color}
-                          fillOpacity={opacity / 100}
-                          stroke={annotation.color}
-                          strokeWidth={isSelected ? strokeWidth + 1.5 : strokeWidth}
-                        />
-                      )}
-                      {showBoxes && (
-                        <rect
-                          x={x1}
-                          y={y1}
-                          width={x2 - x1}
-                          height={y2 - y1}
-                          fill="none"
-                          stroke={annotation.color}
-                          strokeDasharray={isSelected ? "0" : "8 5"}
-                          strokeWidth={isSelected ? strokeWidth + 1 : strokeWidth}
-                        />
-                      )}
-                      {showLabels && (
-                        <text x={x1 + 4} y={Math.max(18, y1 - 8)} fill={annotation.color}>{annotation.category}</text>
-                      )}
+                    <g key={prediction.id} onClick={() => setSelectedId(prediction.id)} className={isSelected ? "selected-shape" : ""}>
+                      {showMasks && <polygon points={points(prediction.segmentation)} fill={prediction.color} fillOpacity={opacity / 100} stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} />}
+                      {showBoxes && <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} strokeDasharray={isSelected ? "0" : "8 5"} />}
+                      {showLabels && <text x={x1 + 4} y={Math.max(18, y1 - 8)} fill={prediction.color}>{prediction.category} {Math.round(prediction.confidence * 100)}%</text>}
                     </g>
                   );
                 })}
@@ -224,12 +262,25 @@ export function App() {
           )}
         </div>
 
-        <footer className="bottom-bar">
-          <button onClick={() => setPan((current) => ({ ...current, x: current.x - 30 }))}><Move size={15} /> Left</button>
-          <button onClick={() => setPan((current) => ({ ...current, x: current.x + 30 }))}><Move size={15} /> Right</button>
-          <button onClick={() => setPan((current) => ({ ...current, y: current.y - 30 }))}><Move size={15} /> Up</button>
-          <button onClick={() => setPan((current) => ({ ...current, y: current.y + 30 }))}><Move size={15} /> Down</button>
-          <label>Zoom <input type="range" min="45" max="300" value={Math.round(zoom * 100)} onChange={(event) => setZoom(Number(event.target.value) / 100)} /></label>
+        <footer className="details">
+          <div>
+            <span className="eyebrow">Modele actif</span>
+            <strong>{activeOutput?.model.name ?? "Aucune prediction lancee"}</strong>
+            <p>{activeOutput?.model.dataset ?? "Lancez une prediction ou importez une image pour afficher les sorties."}</p>
+          </div>
+          <div>
+            <span className="eyebrow">Classes du modele</span>
+            <p>{activeOutput?.model.classes.join(", ") ?? currentModels[0]?.classes.join(", ")}</p>
+          </div>
+          <div>
+            <span className="eyebrow">Prediction selectionnee</span>
+            {selectedPrediction ? (
+              <p>{selectedPrediction.category} - logit {selectedPrediction.logit} - confiance {Math.round(selectedPrediction.confidence * 100)}%</p>
+            ) : (
+              <p>Aucun masque selectionne.</p>
+            )}
+          </div>
+          <button onClick={() => setShowMasks((value) => !value)}>{showMasks ? <EyeOff size={16} /> : <Eye size={16} />} Masques</button>
         </footer>
       </section>
     </main>
