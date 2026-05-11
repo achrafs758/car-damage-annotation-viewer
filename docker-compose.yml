@@ -1,0 +1,23 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PYTHONUNBUFFERED: "1"
+      HF_HOME: /app/models/_hf_home
+      HF_HUB_DISABLE_XET: "1"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/media:/app/media
+      - ./backend/models:/app/models
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_URL: http://127.0.0.1:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend

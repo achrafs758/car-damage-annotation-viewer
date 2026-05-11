@@ -57,3 +57,20 @@ python manage.py runserver 127.0.0.1:8000
 ```
 
 The downloaded weights are stored under `backend/models/` and ignored by Git. The local prediction endpoint runs the installed YOLO weights with GPU when available and CPU otherwise.
+
+## Docker
+
+After installing Docker Desktop:
+
+```bash
+docker compose up --build
+```
+
+Open http://127.0.0.1:5173. Logs are visible with:
+
+```bash
+docker compose logs -f backend
+docker compose logs -f frontend
+```
+
+The compose setup mounts `backend/models` and `backend/media`, so downloaded models and uploaded images stay on the host machine.

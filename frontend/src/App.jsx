@@ -131,7 +131,10 @@ export function App() {
     setBusy(true);
     setError("");
     try {
-      const entries = await Promise.all(tasks.map(async (nextTask) => [nextTask, await predictTask(image, nextTask)]));
+      const entries = [];
+      for (const nextTask of tasks) {
+        entries.push([nextTask, await predictTask(image, nextTask)]);
+      }
       const nextResults = Object.fromEntries(entries);
       setPredictionCache((current) => ({
         ...current,
