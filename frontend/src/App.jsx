@@ -11,7 +11,6 @@ import {
   Layers,
   Moon,
   Play,
-  RefreshCw,
   Search,
   Sun,
   Trash2,
@@ -66,19 +65,45 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    Promise.all([
-      fetch(`${API_URL}/api/annotations/`).then((response) => response.json()),
-      fetch(`${API_URL}/api/models/`).then((response) => response.json())
-    ]).then(([samples, models]) => {
-      setImages(samples.items.map((item) => ({ ...item, source: "sample", key: `sample-${item.id}` })));
-      setRegistry(models);
-    });
+    async function loadInitialWorkspace() {
+      setBusy(true);
+      setError("");
+      try {
+        const [samples, models] = await Promise.all([
+          fetch(`${API_URL}/api/annotations/`).then((response) => response.json()),
+          fetch(`${API_URL}/api/models/`).then((response) => response.json())
+        ]);
+        const sampleImages = samples.items.map((item) => ({ ...item, source: "sample", key: `sample-${item.id}` }));
+        const predictionEntries = await Promise.all(sampleImages.map(async (image) => {
+          const resultEntries = await Promise.all(tasks.map(async (nextTask) => {
+            const params = new URLSearchParams({ task: nextTask, image_id: String(image.id) });
+            const response = await fetch(`${API_URL}/api/predictions/?${params}`);
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error ?? "Prediction impossible");
+            return [nextTask, payload];
+          }));
+          return [image.key, Object.fromEntries(resultEntries)];
+        }));
+
+        setPredictionCache(Object.fromEntries(predictionEntries));
+        setImages(sampleImages);
+        setRegistry(models);
+      } catch (caught) {
+        setError(caught.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    loadInitialWorkspace();
   }, []);
 
   const activeImage = images[activeIndex];
   const taskConfig = registry?.tasks?.[task];
   const currentModels = taskConfig?.models ?? [];
   const taskResult = activeImage ? predictionCache[activeImage.key]?.[task] : null;
+  const hasSavedPredictions = activeImage ? tasks.every((nextTask) => predictionCache[activeImage.key]?.[nextTask]) : false;
+  const canPredictActiveImage = activeImage?.source === "upload" && !hasSavedPredictions;
   const rawOutputs = useMemo(() => (taskResult?.outputs ?? []).map(decorate), [taskResult]);
   const outputs = modelId === "all" ? rawOutputs : rawOutputs.filter((output) => output.model.id === modelId);
   const activeOutput = outputs.find((output) => output.model.id === selectedModel) ?? outputs[0];
@@ -102,6 +127,7 @@ export function App() {
 
   async function runAllPredictions(image = activeImage) {
     if (!image) return;
+    if (image.source !== "upload" || tasks.every((nextTask) => predictionCache[image.key]?.[nextTask])) return;
     setBusy(true);
     setError("");
     try {
@@ -169,9 +195,12 @@ export function App() {
         key: `upload-${uploadedImage.id}`,
         source: "upload",
       };
-      setImages((current) => [...current, uploaded]);
-      setActiveIndex(images.length);
+      setImages((current) => {
+        setActiveIndex(current.length);
+        return [...current, uploaded];
+      });
       setSelectedId(null);
+      setSelectedModel(null);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -248,9 +277,10 @@ export function App() {
             <span>{activeIndex + 1} / {images.length}</span>
             <button title="Image suivante" onClick={() => moveImage(1)}><ChevronRight size={17} /></button>
           </div>
-          <button className="primary" onClick={() => runAllPredictions()} disabled={busy}>
-            <Play size={16} /> {busy ? "Prediction..." : "Predire les 2 taches"}
+          <button className="primary" onClick={() => runAllPredictions()} disabled={busy || !canPredictActiveImage}>
+            <Play size={16} /> {busy ? "Chargement..." : canPredictActiveImage ? "Predire les 2 taches" : "Predictions sauvegardees"}
           </button>
+          <p className="hint">{activeImage.source === "sample" ? "Predictions chargees depuis les preannotations." : hasSavedPredictions ? "Predictions deja calculees pour cette image." : "Nouvelle image : lancez la prediction une seule fois."}</p>
           <label className="upload-button">
             <Upload size={16} />
             Importer une image
@@ -283,11 +313,10 @@ export function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <span className="eyebrow">{taskConfig.label} - {activeImage.source === "upload" ? "image importee" : "echantillon"}</span>
+            <span className="eyebrow">{taskConfig.label} - {activeImage.source === "upload" ? "image importee" : "echantillon preannote"}</span>
             <h1>{activeImage.image_id}</h1>
           </div>
           <div className="topbar-actions">
-            <button title="Relancer" onClick={() => runAllPredictions()} disabled={busy}><RefreshCw size={17} /> Relancer</button>
             <button title="Theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
