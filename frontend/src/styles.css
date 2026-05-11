@@ -223,6 +223,11 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   color: var(--muted);
   font-size: 12px;
 }
+.model-card small {
+  color: #fca5a5;
+  font-size: 11px;
+  line-height: 1.25;
+}
 .model-card.idle {
   border: 1px solid var(--line);
   border-radius: 8px;

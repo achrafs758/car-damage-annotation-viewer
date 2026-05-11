@@ -1,7 +1,13 @@
 import math
 from copy import deepcopy
+from pathlib import Path
 
+from django.conf import settings
+
+from .local_models import local_model_status
 from .model_registry import MODEL_REGISTRY, detect_device
+
+_YOLO_CACHE = {}
 
 DAMAGE_SEQUENCE = [
     "rayure",
@@ -146,18 +152,17 @@ def _translate_part(label):
 
 
 def predictions_for_item(item, task, model_id=None, confidence_threshold=0):
-    if not item.get("annotations"):
-        item = {
-            **item,
-            "annotations": _synthetic_annotations(item["width"], item["height"]),
-        }
     task_config = MODEL_REGISTRY[task]
     runtime = detect_device()
     outputs = []
     for model_index, model in enumerate(task_config["models"]):
         if model_id and model["id"] != model_id:
             continue
-        if task == "car_parts":
+        local = local_model_status(model["id"])
+        error = None
+        if item.get("source") == "upload" or not item.get("annotations"):
+            predictions, error = _run_local_model(item, model, confidence_threshold)
+        elif task == "car_parts":
             predictions = _part_predictions(item, model, model_index)
         else:
             predictions = _damage_predictions(item, model, model_index)
@@ -166,8 +171,87 @@ def predictions_for_item(item, task, model_id=None, confidence_threshold=0):
             {
                 "model": model,
                 "runtime": runtime,
+                "local": local,
                 "predictions": predictions,
                 "count": len(predictions),
+                "error": error,
             }
         )
     return outputs
+
+
+def _run_local_model(item, model, confidence_threshold):
+    local = local_model_status(model["id"])
+    if not local["installed"]:
+        return [], "Model weights are not downloaded locally."
+    if local["runner"] != "yolo":
+        return [], "Model is downloaded but requires Detectron2 runner support."
+
+    image_path = _media_path(item["image_url"])
+    if not image_path.exists():
+        return [], f"Image file not found: {image_path}"
+
+    try:
+        from ultralytics import YOLO
+
+        model_path = local["path"]
+        if model_path not in _YOLO_CACHE:
+            _YOLO_CACHE[model_path] = YOLO(model_path)
+
+        device = 0 if detect_device()["gpu_available"] else "cpu"
+        results = _YOLO_CACHE[model_path].predict(
+            source=str(image_path),
+            conf=max(confidence_threshold, 0.01),
+            device=device,
+            verbose=False,
+        )
+        return _yolo_result_to_predictions(results[0], model), None
+    except Exception as exc:
+        return [], f"Local inference failed: {exc}"
+
+
+def _media_path(image_url):
+    relative = image_url.replace(settings.MEDIA_URL, "", 1).lstrip("/")
+    return Path(settings.MEDIA_ROOT) / relative
+
+
+def _yolo_result_to_predictions(result, model):
+    predictions = []
+    names = getattr(result, "names", {}) or {}
+    boxes = result.boxes
+    masks = result.masks
+    if boxes is None:
+        return predictions
+
+    xyxy = boxes.xyxy.cpu().tolist()
+    classes = boxes.cls.cpu().tolist() if boxes.cls is not None else [0] * len(xyxy)
+    confidences = boxes.conf.cpu().tolist() if boxes.conf is not None else [1] * len(xyxy)
+    mask_polygons = []
+    if masks is not None and masks.xy is not None:
+        mask_polygons = masks.xy
+
+    for index, bbox in enumerate(xyxy):
+        class_id = int(classes[index])
+        label = names.get(class_id, _class_for_model(model, index))
+        confidence = float(confidences[index])
+        segmentation = _mask_to_segmentation(mask_polygons[index]) if index < len(mask_polygons) else _bbox_polygon(bbox, result.orig_shape[1], result.orig_shape[0])
+        predictions.append(
+            {
+                "id": f"{model['id']}-{index + 1}",
+                "category": str(label).replace("_", " "),
+                "bbox": [round(float(value), 1) for value in bbox],
+                "segmentation": segmentation,
+                "confidence": round(confidence, 3),
+                "logit": round(math.log(max(min(confidence, 0.999), 0.001) / (1 - max(min(confidence, 0.999), 0.001))), 3),
+            }
+        )
+    return predictions
+
+
+def _mask_to_segmentation(mask_points):
+    if len(mask_points) == 0:
+        return []
+    flat = []
+    for x, y in mask_points:
+        flat.extend([round(float(x), 1), round(float(y), 1)])
+    return [flat]

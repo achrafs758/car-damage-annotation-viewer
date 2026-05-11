@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from PIL import Image
 
 from .inference import predictions_for_item
-from .model_registry import MODEL_REGISTRY, detect_device
+from .model_registry import MODEL_REGISTRY, detect_device, registry_with_local_status
 
 
 def health(_request):
@@ -32,7 +32,7 @@ def annotation_dataset(_request):
 
 
 def models(_request):
-    return JsonResponse({"tasks": MODEL_REGISTRY, "runtime": detect_device()})
+    return JsonResponse({"tasks": registry_with_local_status(), "runtime": detect_device()})
 
 
 def predictions(request):

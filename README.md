@@ -46,4 +46,14 @@ The current demo exposes:
 - `GET /api/predictions/?task=damage&image_id=1` for four damage model outputs.
 - `POST /api/upload-predict/` for uploaded-image demo predictions.
 
-The backend prefers GPU metadata when `torch.cuda.is_available()` is true, otherwise it reports CPU. The current committed predictions are deterministic demo masks/logits derived from the seeded annotation geometry, so CI stays lightweight and the app works without downloading large model weights.
+The backend prefers GPU metadata when `torch.cuda.is_available()` is true, otherwise it reports CPU. The five bundled sample images keep their preannotations for fast review, while imported images are processed by local downloaded model weights.
+
+For imported images, run:
+
+```bash
+cd backend
+python scripts/download_models.py
+python manage.py runserver 127.0.0.1:8000
+```
+
+The downloaded weights are stored under `backend/models/` and ignored by Git. The local prediction endpoint runs the installed YOLO weights with GPU when available and CPU otherwise.

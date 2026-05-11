@@ -298,7 +298,8 @@ export function App() {
           {outputs.length ? outputs.map((output) => (
             <button key={output.model.id} className={activeOutput?.model.id === output.model.id ? "model-card active" : "model-card"} onClick={() => setSelectedModel(output.model.id)}>
               <strong>{output.model.name}</strong>
-              <span>{output.predictions.filter((prediction) => prediction.confidence >= threshold / 100).length} predictions - {output.runtime.device}</span>
+              <span>{output.predictions.filter((prediction) => prediction.confidence >= threshold / 100).length} predictions - {output.local?.installed ? "local" : "non installe"} - {output.runtime.device}</span>
+              {output.error && <small>{output.error}</small>}
             </button>
           )) : currentModels.map((model) => (
             <article key={model.id} className="model-card idle">
@@ -332,6 +333,7 @@ export function App() {
             <span className="eyebrow">Modele actif</span>
             <strong>{activeOutput?.model.name ?? "Aucune prediction lancee"}</strong>
             <p>{activeOutput?.model.dataset ?? "Cliquez sur Predire les 2 taches pour generer les sorties des 8 modeles."}</p>
+            {activeOutput?.local && <p>Poids locaux : {activeOutput.local.installed ? activeOutput.local.path : "non telecharges"}</p>}
           </div>
           <div>
             <span className="eyebrow">Classes du modele</span>
