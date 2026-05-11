@@ -41,19 +41,6 @@ function decorate(output, modelIndex) {
   };
 }
 
-function loadImage(file) {
-  return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => resolve({ objectUrl, width: image.naturalWidth, height: image.naturalHeight });
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("Image illisible."));
-    };
-    image.src = objectUrl;
-  });
-}
-
 export function App() {
   const [registry, setRegistry] = useState(null);
   const [images, setImages] = useState([]);
@@ -127,14 +114,6 @@ export function App() {
           ...nextResults
         }
       }));
-      const returnedImage = nextResults[task]?.image ?? nextResults.car_parts?.image;
-      if (image.source === "upload" && returnedImage?.image_url) {
-        setImages((current) => current.map((candidate) => (
-          candidate.key === image.key
-            ? { ...candidate, ...returnedImage, source: "upload", key: image.key, file: image.file, objectUrl: candidate.objectUrl }
-            : candidate
-        )));
-      }
       setSelectedModel(nextResults[task]?.outputs?.[0]?.model.id ?? null);
       setSelectedId(null);
     } catch (caught) {
@@ -146,10 +125,20 @@ export function App() {
 
   async function predictTask(image, nextTask) {
     if (image.source === "upload") {
-      const body = new FormData();
-      body.append("image", image.file);
-      body.append("task", nextTask);
-      const response = await fetch(`${API_URL}/api/upload-predict/`, { method: "POST", body });
+      const response = await fetch(`${API_URL}/api/uploaded-predictions/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task: nextTask,
+          image: {
+            id: image.id,
+            image_id: image.image_id,
+            image_url: image.image_url,
+            width: image.width,
+            height: image.height
+          }
+        })
+      });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Prediction impossible");
       return payload;
@@ -169,17 +158,16 @@ export function App() {
     setBusy(true);
     setError("");
     try {
-      const loaded = await loadImage(file);
+      const body = new FormData();
+      body.append("image", file);
+      const response = await fetch(`${API_URL}/api/uploads/`, { method: "POST", body });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Import impossible");
+      const uploadedImage = payload.image;
       const uploaded = {
-        id: Date.now(),
-        key: `upload-${Date.now()}`,
+        ...uploadedImage,
+        key: `upload-${uploadedImage.id}`,
         source: "upload",
-        image_id: file.name,
-        image_url: loaded.objectUrl,
-        objectUrl: loaded.objectUrl,
-        width: loaded.width,
-        height: loaded.height,
-        file
       };
       setImages((current) => [...current, uploaded]);
       setActiveIndex(images.length);
@@ -193,7 +181,6 @@ export function App() {
 
   function deleteActiveImage() {
     if (!activeImage || activeImage.source !== "upload") return;
-    if (activeImage.objectUrl) URL.revokeObjectURL(activeImage.objectUrl);
     setPredictionCache((current) => {
       const next = { ...current };
       delete next[activeImage.key];
@@ -213,7 +200,6 @@ export function App() {
 
   function imageSrc(image) {
     if (!image) return "";
-    if (image.objectUrl) return image.objectUrl;
     return `${API_URL}${image.image_url}`;
   }
 

@@ -37,6 +37,38 @@ def _bbox_from_polygon(segmentation):
     return [min(xs), min(ys), max(xs), max(ys)]
 
 
+def _synthetic_annotations(width, height):
+    boxes = [
+        ("Front-bumper", [0.12, 0.62, 0.88, 0.82]),
+        ("Hood", [0.24, 0.28, 0.76, 0.54]),
+        ("Windshield", [0.32, 0.12, 0.68, 0.32]),
+        ("Front-door", [0.48, 0.34, 0.72, 0.70]),
+        ("Back-door", [0.70, 0.36, 0.90, 0.72]),
+        ("Fender", [0.12, 0.36, 0.34, 0.66]),
+        ("Front-wheel", [0.24, 0.68, 0.42, 0.92]),
+        ("Back-wheel", [0.68, 0.68, 0.86, 0.92]),
+        ("Headlight", [0.12, 0.54, 0.28, 0.64]),
+        ("Grille", [0.32, 0.56, 0.56, 0.68]),
+        ("Mirror", [0.70, 0.30, 0.80, 0.42]),
+        ("Roof", [0.30, 0.04, 0.72, 0.16]),
+        ("Rocker-panel", [0.42, 0.76, 0.76, 0.86]),
+        ("Quarter-panel", [0.80, 0.40, 0.96, 0.68]),
+    ]
+    annotations = []
+    for index, (category, ratios) in enumerate(boxes, start=1):
+        x1, y1, x2, y2 = ratios
+        bbox = [round(x1 * width, 1), round(y1 * height, 1), round(x2 * width, 1), round(y2 * height, 1)]
+        annotations.append(
+            {
+                "id": index,
+                "category": category,
+                "bbox": bbox,
+                "segmentation": _bbox_polygon(bbox, width, height, shrink=0),
+            }
+        )
+    return annotations
+
+
 def _part_predictions(item, model, model_index):
     predictions = []
     for index, annotation in enumerate(item["annotations"][:14]):
@@ -114,6 +146,11 @@ def _translate_part(label):
 
 
 def predictions_for_item(item, task, model_id=None, confidence_threshold=0):
+    if not item.get("annotations"):
+        item = {
+            **item,
+            "annotations": _synthetic_annotations(item["width"], item["height"]),
+        }
     task_config = MODEL_REGISTRY[task]
     runtime = detect_device()
     outputs = []

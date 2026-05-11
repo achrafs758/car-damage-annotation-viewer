@@ -1,6 +1,5 @@
 import json
 import uuid
-from copy import deepcopy
 from pathlib import Path
 
 from django.conf import settings
@@ -73,18 +72,62 @@ def upload_prediction(request):
         for chunk in image.chunks():
             destination.write(chunk)
 
-    seed = _scale_seed_item(_load_dataset()["items"][0], target)
-    seed["id"] = 999
-    seed["image_id"] = image.name
-    seed["image_url"] = f"/media/uploads/{filename}"
+    seed = _uploaded_item(image.name, target, filename)
     return JsonResponse(
         {
             "task": task,
             "image": seed,
             "outputs": predictions_for_item(seed, task, model_id, threshold),
-            "note": "Mode demo : geometrie de prediction redimensionnee sur l'image importee.",
+            "note": "Mode demo : predictions generees pour l'image importee.",
         }
     )
+
+
+@csrf_exempt
+def upload_image(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Methode non supportee."}, status=405)
+
+    image = request.FILES.get("image")
+    if not image:
+        return JsonResponse({"error": "Aucune image fournie."}, status=400)
+
+    upload_root = Path(settings.MEDIA_ROOT) / "uploads"
+    upload_root.mkdir(parents=True, exist_ok=True)
+    suffix = Path(image.name).suffix.lower() or ".jpg"
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    target = upload_root / filename
+    with target.open("wb") as destination:
+        for chunk in image.chunks():
+            destination.write(chunk)
+
+    return JsonResponse({"image": _uploaded_item(image.name, target, filename)})
+
+
+@csrf_exempt
+def uploaded_predictions(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Methode non supportee."}, status=405)
+
+    payload = json.loads(request.body.decode("utf-8"))
+    task = payload.get("task", "car_parts")
+    model_id = payload.get("model")
+    threshold = _threshold(payload.get("threshold"))
+    item = payload.get("image")
+    if task not in MODEL_REGISTRY:
+        return JsonResponse({"error": "Tache inconnue."}, status=400)
+    if not item:
+        return JsonResponse({"error": "Image manquante."}, status=400)
+
+    item = {
+        "id": item.get("id", 999),
+        "image_id": item["image_id"],
+        "image_url": item["image_url"],
+        "width": int(item["width"]),
+        "height": int(item["height"]),
+        "annotations": [],
+    }
+    return JsonResponse({"task": task, "image": item, "outputs": predictions_for_item(item, task, model_id, threshold)})
 
 
 def _load_dataset():
@@ -100,32 +143,15 @@ def _threshold(raw_value):
         return 0
 
 
-def _scale_seed_item(seed_item, image_path):
+def _uploaded_item(original_name, image_path, filename):
     with Image.open(image_path) as image:
         width, height = image.size
-
-    scaled = deepcopy(seed_item)
-    x_scale = width / seed_item["width"]
-    y_scale = height / seed_item["height"]
-    scaled["width"] = width
-    scaled["height"] = height
-    for annotation in scaled["annotations"]:
-        annotation["bbox"] = _scale_bbox(annotation["bbox"], x_scale, y_scale)
-        annotation["segmentation"] = _scale_segmentation(annotation.get("segmentation", []), x_scale, y_scale)
-    return scaled
-
-
-def _scale_bbox(bbox, x_scale, y_scale):
-    x1, y1, x2, y2 = bbox
-    return [round(x1 * x_scale, 1), round(y1 * y_scale, 1), round(x2 * x_scale, 1), round(y2 * y_scale, 1)]
-
-
-def _scale_segmentation(segmentation, x_scale, y_scale):
-    scaled_polygons = []
-    for polygon in segmentation:
-        scaled = []
-        for index, value in enumerate(polygon):
-            scale = x_scale if index % 2 == 0 else y_scale
-            scaled.append(round(value * scale, 1))
-        scaled_polygons.append(scaled)
-    return scaled_polygons
+    return {
+        "id": uuid.uuid4().hex,
+        "source": "upload",
+        "image_id": original_name,
+        "image_url": f"/media/uploads/{filename}",
+        "width": width,
+        "height": height,
+        "annotations": [],
+    }
