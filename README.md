@@ -56,7 +56,7 @@ python scripts/download_models.py
 python manage.py runserver 127.0.0.1:8000
 ```
 
-The downloaded weights are stored under `backend/models/` and ignored by Git. The local prediction endpoint runs the installed YOLO weights with GPU when available and CPU otherwise.
+The downloaded weights are stored under `backend/models/` and ignored by Git. The local prediction endpoint runs the installed YOLO and MobileSAM weights with GPU when available and CPU otherwise. MobileSAM is used as a promptable segmentation model for both car-part regions and damage candidate regions.
 
 ## Docker
 

@@ -31,6 +31,13 @@ LOCAL_MODEL_FILES = {
         "filename": "best.pt",
         "local_path": MODELS_ROOT / "parts" / "filoemad_yolo11_carparts.pt",
     },
+    "parts-sam-mobile": {
+        "runner": "sam",
+        "repo": "kornia/mobile_sam",
+        "repo_type": "model",
+        "filename": "mobile_sam.pt",
+        "local_path": MODELS_ROOT / "sam" / "mobile_sam.pt",
+    },
     "damage-yolov11-cardd": {
         "runner": "yolo",
         "repo": "harpreetsahota/car-dd-segmentation-yolov11",
@@ -58,6 +65,13 @@ LOCAL_MODEL_FILES = {
         "repo_type": "model",
         "filename": "best.pt",
         "local_path": MODELS_ROOT / "damage" / "vineetsarpal_yolov11n_damage.pt",
+    },
+    "damage-sam-mobile": {
+        "runner": "sam",
+        "repo": "kornia/mobile_sam",
+        "repo_type": "model",
+        "filename": "mobile_sam.pt",
+        "local_path": MODELS_ROOT / "sam" / "mobile_sam.pt",
     },
 }
 

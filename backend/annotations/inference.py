@@ -8,6 +8,7 @@ from .local_models import local_model_status
 from .model_registry import MODEL_REGISTRY, detect_device
 
 _YOLO_CACHE = {}
+_SAM_CACHE = {}
 
 DAMAGE_SEQUENCE = [
     "rayure",
@@ -184,12 +185,14 @@ def _run_local_model(item, model, confidence_threshold):
     local = local_model_status(model["id"])
     if not local["installed"]:
         return [], "Model weights are not downloaded locally."
-    if local["runner"] != "yolo":
-        return [], "Model is downloaded but requires Detectron2 runner support."
-
     image_path = _media_path(item["image_url"])
     if not image_path.exists():
         return [], f"Image file not found: {image_path}"
+
+    if local["runner"] == "sam":
+        return _run_sam_model(item, model, local, image_path, confidence_threshold)
+    if local["runner"] != "yolo":
+        return [], f"Model is downloaded but runner '{local['runner']}' is not implemented."
 
     try:
         from ultralytics import YOLO
@@ -208,6 +211,70 @@ def _run_local_model(item, model, confidence_threshold):
         return _yolo_result_to_predictions(results[0], model), None
     except Exception as exc:
         return [], f"Local inference failed: {exc}"
+
+
+def _run_sam_model(item, model, local, image_path, confidence_threshold):
+    try:
+        from ultralytics import SAM
+
+        model_path = local["path"]
+        if model_path not in _SAM_CACHE:
+            _SAM_CACHE[model_path] = SAM(model_path)
+
+        prompts = _sam_prompts(item, model)
+        bboxes = [prompt["bbox"] for prompt in prompts]
+        device = 0 if detect_device()["gpu_available"] else "cpu"
+        result = _SAM_CACHE[model_path].predict(
+            source=str(image_path),
+            bboxes=bboxes,
+            device=device,
+            verbose=False,
+        )[0]
+        return _sam_result_to_predictions(result, model, prompts, confidence_threshold), None
+    except Exception as exc:
+        return [], f"Local SAM inference failed: {exc}"
+
+
+def _sam_prompts(item, model):
+    annotations = _synthetic_annotations(item["width"], item["height"])
+    if "damage" in model["id"]:
+        annotations = annotations[::2][:8]
+    return [
+        {
+            "bbox": annotation["bbox"],
+            "category": _class_for_model(model, index) if "damage" in model["id"] else _translate_part(annotation["category"]),
+        }
+        for index, annotation in enumerate(annotations[:12])
+    ]
+
+
+def _sam_result_to_predictions(result, model, prompts, confidence_threshold):
+    predictions = []
+    boxes = result.boxes
+    masks = result.masks
+    if boxes is None or masks is None:
+        return predictions
+
+    xyxy = boxes.xyxy.cpu().tolist()
+    confidences = boxes.conf.cpu().tolist() if boxes.conf is not None else [0.8] * len(xyxy)
+    mask_polygons = masks.xy if masks.xy is not None else []
+    for index, bbox in enumerate(xyxy):
+        confidence = float(confidences[index])
+        if confidence < confidence_threshold:
+            continue
+        label = prompts[index]["category"] if index < len(prompts) else _class_for_model(model, index)
+        segmentation = _mask_to_segmentation(mask_polygons[index]) if index < len(mask_polygons) else _bbox_polygon(bbox, result.orig_shape[1], result.orig_shape[0])
+        predictions.append(
+            {
+                "id": f"{model['id']}-{index + 1}",
+                "category": label,
+                "bbox": [round(float(value), 1) for value in bbox],
+                "segmentation": segmentation,
+                "confidence": round(confidence, 3),
+                "logit": round(math.log(max(min(confidence, 0.999), 0.001) / (1 - max(min(confidence, 0.999), 0.001))), 3),
+            }
+        )
+    return predictions
 
 
 def _media_path(image_url):

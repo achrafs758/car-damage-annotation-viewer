@@ -262,7 +262,7 @@ export function App() {
         <section className="panel">
           <div className="panel-title"><Cpu size={16} /> Modele</div>
           <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
-            <option value="all">Voir les 4 modeles</option>
+            <option value="all">Voir les {currentModels.length} modeles</option>
             {currentModels.map((model) => (
               <option key={model.id} value={model.id}>{model.name}</option>
             ))}
@@ -281,7 +281,7 @@ export function App() {
             <button title="Image suivante" onClick={() => moveImage(1)}><ChevronRight size={17} /></button>
           </div>
           <button className="primary" onClick={() => runAllPredictions()} disabled={busy || !canPredictActiveImage}>
-            <Play size={16} /> {busy ? "Chargement..." : canPredictActiveImage ? "Predire les 2 taches" : "Predictions sauvegardees"}
+            <Play size={16} /> {busy ? "Chargement..." : canPredictActiveImage ? `Predire ${registry.tasks.car_parts.models.length + registry.tasks.damage.models.length} modeles` : "Predictions sauvegardees"}
           </button>
           <p className="hint">{activeImage.source === "sample" ? "Predictions chargees depuis les preannotations." : hasSavedPredictions ? "Predictions deja calculees pour cette image." : "Nouvelle image : lancez la prediction une seule fois."}</p>
           <label className="upload-button">
