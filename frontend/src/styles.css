@@ -45,6 +45,10 @@ button {
   cursor: pointer;
 }
 button:hover, select:hover { border-color: var(--accent); }
+button:disabled {
+  cursor: wait;
+  opacity: 0.64;
+}
 select { width: 100%; padding: 0 12px; }
 label { color: var(--muted); }
 input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
@@ -114,6 +118,10 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   border-color: var(--accent);
 }
 .primary { color: var(--text); }
+.danger {
+  border-color: color-mix(in srgb, #f87171 55%, var(--line));
+  color: #fca5a5;
+}
 .image-nav {
   display: grid;
   grid-template-columns: 40px 1fr 40px;

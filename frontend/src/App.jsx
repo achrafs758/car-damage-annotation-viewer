@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Boxes,
   ChevronLeft,
@@ -14,11 +14,13 @@ import {
   RefreshCw,
   Search,
   Sun,
+  Trash2,
   Upload
 } from "lucide-react";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 const colors = ["#2dd4bf", "#f97316", "#60a5fa", "#e879f9", "#a3e635", "#f43f5e", "#facc15", "#38bdf8"];
+const tasks = ["car_parts", "damage"];
 
 function points(segmentation) {
   const polygon = segmentation?.[0];
@@ -39,13 +41,26 @@ function decorate(output, modelIndex) {
   };
 }
 
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => resolve({ objectUrl, width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Image illisible."));
+    };
+    image.src = objectUrl;
+  });
+}
+
 export function App() {
-  const [dataset, setDataset] = useState(null);
   const [registry, setRegistry] = useState(null);
+  const [images, setImages] = useState([]);
   const [task, setTask] = useState("car_parts");
   const [modelId, setModelId] = useState("all");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [result, setResult] = useState(null);
+  const [predictionCache, setPredictionCache] = useState({});
   const [selectedModel, setSelectedModel] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [query, setQuery] = useState("");
@@ -55,8 +70,7 @@ export function App() {
   const [opacity, setOpacity] = useState(45);
   const [threshold, setThreshold] = useState(50);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "dark");
-  const [uploading, setUploading] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -69,23 +83,24 @@ export function App() {
       fetch(`${API_URL}/api/annotations/`).then((response) => response.json()),
       fetch(`${API_URL}/api/models/`).then((response) => response.json())
     ]).then(([samples, models]) => {
-      setDataset(samples);
+      setImages(samples.items.map((item) => ({ ...item, source: "sample", key: `sample-${item.id}` })));
       setRegistry(models);
     });
   }, []);
 
-  const activeImage = result?.image ?? dataset?.items?.[activeIndex];
+  const activeImage = images[activeIndex];
   const taskConfig = registry?.tasks?.[task];
   const currentModels = taskConfig?.models ?? [];
-  const outputs = useMemo(() => (result?.outputs ?? []).map(decorate), [result]);
+  const taskResult = activeImage ? predictionCache[activeImage.key]?.[task] : null;
+  const rawOutputs = useMemo(() => (taskResult?.outputs ?? []).map(decorate), [taskResult]);
+  const outputs = modelId === "all" ? rawOutputs : rawOutputs.filter((output) => output.model.id === modelId);
   const activeOutput = outputs.find((output) => output.model.id === selectedModel) ?? outputs[0];
 
   const visiblePredictions = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!activeOutput) return [];
     return activeOutput.predictions.filter((prediction) => {
-      const aboveThreshold = prediction.confidence >= threshold / 100;
-      if (!aboveThreshold) return false;
+      if (prediction.confidence < threshold / 100) return false;
       if (!needle) return true;
       return prediction.category.toLowerCase().includes(needle) || String(prediction.id).toLowerCase().includes(needle);
     });
@@ -94,85 +109,115 @@ export function App() {
   const selectedPrediction = visiblePredictions.find((prediction) => prediction.id === selectedId) ?? visiblePredictions[0];
 
   useEffect(() => {
-    setModelId("all");
     setSelectedModel(null);
     setSelectedId(null);
-    setResult(null);
-  }, [task]);
+  }, [task, modelId, activeIndex]);
 
-  const submitUpload = useCallback(async (file) => {
-    setUploading(true);
-    const body = new FormData();
-    body.append("image", file);
-    body.append("task", task);
-    if (modelId !== "all") body.append("model", modelId);
+  async function runAllPredictions(image = activeImage) {
+    if (!image) return;
+    setBusy(true);
     setError("");
     try {
-      const response = await fetch(`${API_URL}/api/upload-predict/`, { method: "POST", body });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Import impossible");
-      setResult({ ...payload, outputs: payload.outputs.map(decorate) });
-      setSelectedModel(payload.outputs[0]?.model.id ?? null);
+      const entries = await Promise.all(tasks.map(async (nextTask) => [nextTask, await predictTask(image, nextTask)]));
+      const nextResults = Object.fromEntries(entries);
+      setPredictionCache((current) => ({
+        ...current,
+        [image.key]: {
+          ...(current[image.key] ?? {}),
+          ...nextResults
+        }
+      }));
+      const returnedImage = nextResults[task]?.image ?? nextResults.car_parts?.image;
+      if (image.source === "upload" && returnedImage?.image_url) {
+        setImages((current) => current.map((candidate) => (
+          candidate.key === image.key
+            ? { ...candidate, ...returnedImage, source: "upload", key: image.key, file: image.file, objectUrl: candidate.objectUrl }
+            : candidate
+        )));
+      }
+      setSelectedModel(nextResults[task]?.outputs?.[0]?.model.id ?? null);
       setSelectedId(null);
     } catch (caught) {
       setError(caught.message);
     } finally {
-      setUploading(false);
+      setBusy(false);
     }
-  }, [modelId, task]);
+  }
 
-  useEffect(() => {
-    if (!dataset || !registry) return;
-    if (uploadedFile) {
-      submitUpload(uploadedFile);
-      return;
-    }
-    const imageId = dataset.items?.[activeIndex]?.id;
-    if (!imageId) return;
-    const params = new URLSearchParams({ task, image_id: String(imageId) });
-    if (modelId !== "all") params.set("model", modelId);
-    fetch(`${API_URL}/api/predictions/?${params}`)
-      .then((response) => response.json())
-      .then((payload) => {
-        setResult({ ...payload, outputs: payload.outputs.map(decorate) });
-        setSelectedModel(payload.outputs[0]?.model.id ?? null);
-        setSelectedId(null);
-      });
-  }, [activeIndex, dataset, modelId, registry, submitUpload, task, uploadedFile]);
-
-  async function runPrediction(nextImageId = dataset?.items?.[activeIndex]?.id) {
-    const params = new URLSearchParams({ task, image_id: String(nextImageId), threshold: String(threshold / 100) });
-    if (modelId !== "all") params.set("model", modelId);
-    setError("");
-    try {
-      const response = await fetch(`${API_URL}/api/predictions/?${params}`);
+  async function predictTask(image, nextTask) {
+    if (image.source === "upload") {
+      const body = new FormData();
+      body.append("image", image.file);
+      body.append("task", nextTask);
+      const response = await fetch(`${API_URL}/api/upload-predict/`, { method: "POST", body });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Prediction impossible");
-      setResult({ ...payload, outputs: payload.outputs.map(decorate) });
-      setSelectedModel(payload.outputs[0]?.model.id ?? null);
-      setSelectedId(null);
-    } catch (caught) {
-      setError(caught.message);
+      return payload;
     }
+
+    const params = new URLSearchParams({ task: nextTask, image_id: String(image.id) });
+    const response = await fetch(`${API_URL}/api/predictions/?${params}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Prediction impossible");
+    return payload;
   }
 
   async function uploadImage(event) {
     const file = event.target.files?.[0];
-    if (!file) return;
-    setUploadedFile(file);
     event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      const loaded = await loadImage(file);
+      const uploaded = {
+        id: Date.now(),
+        key: `upload-${Date.now()}`,
+        source: "upload",
+        image_id: file.name,
+        image_url: loaded.objectUrl,
+        objectUrl: loaded.objectUrl,
+        width: loaded.width,
+        height: loaded.height,
+        file
+      };
+      setImages((current) => [...current, uploaded]);
+      setActiveIndex(images.length);
+      setSelectedId(null);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function deleteActiveImage() {
+    if (!activeImage || activeImage.source !== "upload") return;
+    if (activeImage.objectUrl) URL.revokeObjectURL(activeImage.objectUrl);
+    setPredictionCache((current) => {
+      const next = { ...current };
+      delete next[activeImage.key];
+      return next;
+    });
+    setImages((current) => current.filter((image) => image.key !== activeImage.key));
+    setActiveIndex((current) => Math.max(0, Math.min(current - 1, images.length - 2)));
+    setSelectedId(null);
+    setSelectedModel(null);
   }
 
   function moveImage(direction) {
-    if (!dataset?.items?.length) return;
-    const next = (activeIndex + direction + dataset.items.length) % dataset.items.length;
-    setUploadedFile(null);
+    if (!images.length) return;
+    const next = (activeIndex + direction + images.length) % images.length;
     setActiveIndex(next);
-    setResult(null);
-    setSelectedId(null);
   }
 
-  if (!dataset || !registry) {
+  function imageSrc(image) {
+    if (!image) return "";
+    if (image.objectUrl) return image.objectUrl;
+    return `${API_URL}${image.image_url}`;
+  }
+
+  if (!registry || !images.length) {
     return <main className="loading">Chargement du studio IA...</main>;
   }
 
@@ -199,7 +244,7 @@ export function App() {
         <section className="panel">
           <div className="panel-title"><Cpu size={16} /> Modele</div>
           <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
-            <option value="all">Comparer les 4 modeles</option>
+            <option value="all">Voir les 4 modeles</option>
             {currentModels.map((model) => (
               <option key={model.id} value={model.id}>{model.name}</option>
             ))}
@@ -214,15 +259,20 @@ export function App() {
           <div className="panel-title"><ImagePlus size={16} /> Image</div>
           <div className="image-nav">
             <button title="Image precedente" onClick={() => moveImage(-1)}><ChevronLeft size={17} /></button>
-            <span>{activeIndex + 1} / {dataset.items.length}</span>
+            <span>{activeIndex + 1} / {images.length}</span>
             <button title="Image suivante" onClick={() => moveImage(1)}><ChevronRight size={17} /></button>
           </div>
-          <button className="primary" onClick={() => (uploadedFile ? submitUpload(uploadedFile) : runPrediction())}><Play size={16} /> Lancer la prediction</button>
+          <button className="primary" onClick={() => runAllPredictions()} disabled={busy}>
+            <Play size={16} /> {busy ? "Prediction..." : "Predire les 2 taches"}
+          </button>
           <label className="upload-button">
             <Upload size={16} />
-            {uploading ? "Analyse..." : "Importer une image"}
+            Importer une image
             <input type="file" accept="image/*" onChange={uploadImage} />
           </label>
+          {activeImage.source === "upload" && (
+            <button className="danger" onClick={deleteActiveImage}><Trash2 size={16} /> Supprimer l'image</button>
+          )}
           {error && <p className="error">{error}</p>}
         </section>
 
@@ -247,11 +297,11 @@ export function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <span className="eyebrow">{taskConfig.label}</span>
-            <h1>{activeImage?.image_id ?? "Aucune image"}</h1>
+            <span className="eyebrow">{taskConfig.label} - {activeImage.source === "upload" ? "image importee" : "echantillon"}</span>
+            <h1>{activeImage.image_id}</h1>
           </div>
           <div className="topbar-actions">
-            <button title="Relancer" onClick={() => runPrediction()}><RefreshCw size={17} /> Relancer</button>
+            <button title="Relancer" onClick={() => runAllPredictions()} disabled={busy}><RefreshCw size={17} /> Relancer</button>
             <button title="Theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
             </button>
@@ -267,37 +317,35 @@ export function App() {
           )) : currentModels.map((model) => (
             <article key={model.id} className="model-card idle">
               <strong>{model.name}</strong>
-              <span>{model.architecture} - {model.status}</span>
+              <span>{model.architecture} - en attente de prediction</span>
             </article>
           ))}
         </div>
 
         <div className="stage-wrap">
-          {activeImage && (
-            <div className="stage" style={{ aspectRatio: `${activeImage.width} / ${activeImage.height}` }}>
-              <img src={`${API_URL}${activeImage.image_url}`} alt={activeImage.image_id} draggable="false" />
-              <svg viewBox={`0 0 ${activeImage.width} ${activeImage.height}`} aria-label="Predictions IA">
-                {visiblePredictions.map((prediction) => {
-                  const [x1, y1, x2, y2] = prediction.bbox;
-                  const isSelected = selectedPrediction?.id === prediction.id;
-                  return (
-                    <g key={prediction.id} onClick={() => setSelectedId(prediction.id)} className={isSelected ? "selected-shape" : ""}>
-                      {showMasks && <polygon points={points(prediction.segmentation)} fill={prediction.color} fillOpacity={opacity / 100} stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} />}
-                      {showBoxes && <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} strokeDasharray={isSelected ? "0" : "8 5"} />}
-                      {showLabels && <text x={x1 + 4} y={Math.max(18, y1 - 8)} fill={prediction.color}>{prediction.category} {Math.round(prediction.confidence * 100)}%</text>}
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          )}
+          <div className="stage" style={{ aspectRatio: `${activeImage.width} / ${activeImage.height}` }}>
+            <img src={imageSrc(activeImage)} alt={activeImage.image_id} draggable="false" />
+            <svg viewBox={`0 0 ${activeImage.width} ${activeImage.height}`} aria-label="Predictions IA">
+              {visiblePredictions.map((prediction) => {
+                const [x1, y1, x2, y2] = prediction.bbox;
+                const isSelected = selectedPrediction?.id === prediction.id;
+                return (
+                  <g key={prediction.id} onClick={() => setSelectedId(prediction.id)} className={isSelected ? "selected-shape" : ""}>
+                    {showMasks && <polygon points={points(prediction.segmentation)} fill={prediction.color} fillOpacity={opacity / 100} stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} />}
+                    {showBoxes && <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} strokeDasharray={isSelected ? "0" : "8 5"} />}
+                    {showLabels && <text x={x1 + 4} y={Math.max(18, y1 - 8)} fill={prediction.color}>{prediction.category} {Math.round(prediction.confidence * 100)}%</text>}
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
         </div>
 
         <footer className="details">
           <div>
             <span className="eyebrow">Modele actif</span>
             <strong>{activeOutput?.model.name ?? "Aucune prediction lancee"}</strong>
-            <p>{activeOutput?.model.dataset ?? "Lancez une prediction ou importez une image pour afficher les sorties."}</p>
+            <p>{activeOutput?.model.dataset ?? "Cliquez sur Predire les 2 taches pour generer les sorties des 8 modeles."}</p>
           </div>
           <div>
             <span className="eyebrow">Classes du modele</span>
