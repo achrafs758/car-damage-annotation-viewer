@@ -60,7 +60,7 @@ The downloaded weights are stored under `backend/models/` and ignored by Git. Th
 
 ## Docker
 
-After installing Docker Desktop:
+After installing Docker Desktop, see `DOCKER_GUIDE.md` for the complete launch guide. Quick start:
 
 ```bash
 docker compose up --build

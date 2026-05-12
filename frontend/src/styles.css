@@ -277,6 +277,12 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 .selected-shape polygon, .selected-shape rect {
   filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.55));
 }
+.class-highlight-shape polygon, .class-highlight-shape rect {
+  filter: drop-shadow(0 0 12px var(--accent));
+}
+.muted-shape {
+  opacity: 0.18;
+}
 
 .details {
   border-top: 1px solid var(--line);
@@ -292,6 +298,28 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   margin: 3px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+.class-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 6px;
+  max-height: 92px;
+  overflow: auto;
+}
+.class-chip {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.class-chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #04110f;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 @media (max-width: 1100px) {

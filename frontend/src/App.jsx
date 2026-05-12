@@ -40,6 +40,17 @@ function decorate(output, modelIndex) {
   };
 }
 
+function normalizedClassName(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function matchesClass(prediction, className) {
+  if (!className) return true;
+  const predicted = normalizedClassName(prediction.category);
+  const selected = normalizedClassName(className);
+  return predicted === selected || predicted.includes(selected) || selected.includes(predicted);
+}
+
 export function App() {
   const [registry, setRegistry] = useState(null);
   const [images, setImages] = useState([]);
@@ -49,6 +60,7 @@ export function App() {
   const [predictionCache, setPredictionCache] = useState({});
   const [selectedModel, setSelectedModel] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedClass, setSelectedClass] = useState("");
   const [query, setQuery] = useState("");
   const [showMasks, setShowMasks] = useState(true);
   const [showBoxes, setShowBoxes] = useState(true);
@@ -100,7 +112,7 @@ export function App() {
 
   const activeImage = images[activeIndex];
   const taskConfig = registry?.tasks?.[task];
-  const currentModels = taskConfig?.models ?? [];
+  const currentModels = useMemo(() => taskConfig?.models ?? [], [taskConfig]);
   const taskResult = activeImage ? predictionCache[activeImage.key]?.[task] : null;
   const hasSavedPredictions = activeImage ? tasks.every((nextTask) => predictionCache[activeImage.key]?.[nextTask]) : false;
   const canPredictActiveImage = activeImage?.source === "upload" && !hasSavedPredictions;
@@ -119,10 +131,16 @@ export function App() {
   }, [activeOutput, query, threshold]);
 
   const selectedPrediction = visiblePredictions.find((prediction) => prediction.id === selectedId) ?? visiblePredictions[0];
+  const classOptions = useMemo(() => {
+    const knownClasses = activeOutput?.model.classes ?? currentModels[0]?.classes ?? [];
+    const predictedClasses = visiblePredictions.map((prediction) => prediction.category);
+    return Array.from(new Set([...predictedClasses, ...knownClasses])).filter(Boolean);
+  }, [activeOutput, currentModels, visiblePredictions]);
 
   useEffect(() => {
     setSelectedModel(null);
     setSelectedId(null);
+    setSelectedClass("");
   }, [task, modelId, activeIndex]);
 
   async function runAllPredictions(image = activeImage) {
@@ -145,6 +163,7 @@ export function App() {
       }));
       setSelectedModel(nextResults[task]?.outputs?.[0]?.model.id ?? null);
       setSelectedId(null);
+      setSelectedClass("");
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -204,6 +223,7 @@ export function App() {
       });
       setSelectedId(null);
       setSelectedModel(null);
+      setSelectedClass("");
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -222,6 +242,7 @@ export function App() {
     setActiveIndex((current) => Math.max(0, Math.min(current - 1, images.length - 2)));
     setSelectedId(null);
     setSelectedModel(null);
+    setSelectedClass("");
   }
 
   function moveImage(direction) {
@@ -349,7 +370,18 @@ export function App() {
                 const [x1, y1, x2, y2] = prediction.bbox;
                 const isSelected = selectedPrediction?.id === prediction.id;
                 return (
-                  <g key={prediction.id} onClick={() => setSelectedId(prediction.id)} className={isSelected ? "selected-shape" : ""}>
+                  <g
+                    key={prediction.id}
+                    onClick={() => {
+                      setSelectedId(prediction.id);
+                      setSelectedClass(prediction.category);
+                    }}
+                    className={[
+                      isSelected ? "selected-shape" : "",
+                      selectedClass && !matchesClass(prediction, selectedClass) ? "muted-shape" : "",
+                      selectedClass && matchesClass(prediction, selectedClass) ? "class-highlight-shape" : ""
+                    ].filter(Boolean).join(" ")}
+                  >
                     {showMasks && <polygon points={points(prediction.segmentation)} fill={prediction.color} fillOpacity={opacity / 100} stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} />}
                     {showBoxes && <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} strokeDasharray={isSelected ? "0" : "8 5"} />}
                     {showLabels && <text x={x1 + 4} y={Math.max(18, y1 - 8)} fill={prediction.color}>{prediction.category} {Math.round(prediction.confidence * 100)}%</text>}
@@ -369,7 +401,18 @@ export function App() {
           </div>
           <div>
             <span className="eyebrow">Classes du modele</span>
-            <p>{activeOutput?.model.classes.join(", ") ?? currentModels[0]?.classes.join(", ")}</p>
+            <div className="class-list">
+              {classOptions.map((className) => (
+                <button
+                  key={className}
+                  className={selectedClass === className ? "class-chip active" : "class-chip"}
+                  onClick={() => setSelectedClass((current) => current === className ? "" : className)}
+                  title={`Mettre en avant : ${className}`}
+                >
+                  {className}
+                </button>
+              ))}
+            </div>
           </div>
           <div>
             <span className="eyebrow">Prediction selectionnee</span>
