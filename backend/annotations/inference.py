@@ -128,6 +128,88 @@ def _class_for_model(model, index):
     return classes[index % len(classes)]
 
 
+def _translate_label(label):
+    normalized = str(label).strip().lower().replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    mapping = {
+        "back bumper": "pare-chocs arriere",
+        "rear bumper": "pare-chocs arriere",
+        "back-bumper": "pare-chocs arriere",
+        "front bumper": "pare-chocs avant",
+        "front-bumper": "pare-chocs avant",
+        "bumper": "pare-chocs",
+        "back glass": "vitre arriere",
+        "rear glass": "vitre arriere",
+        "back window": "vitre arriere",
+        "front glass": "vitre avant",
+        "front window": "vitre avant",
+        "windshield": "pare-brise",
+        "windscreen": "pare-brise",
+        "glass": "vitre",
+        "front left door": "porte avant gauche",
+        "front right door": "porte avant droite",
+        "back left door": "porte arriere gauche",
+        "back right door": "porte arriere droite",
+        "rear left door": "porte arriere gauche",
+        "rear right door": "porte arriere droite",
+        "front door": "porte avant",
+        "rear door": "porte arriere",
+        "back door": "porte arriere",
+        "door": "porte",
+        "hood": "capot",
+        "bonnet": "capot",
+        "fender": "aile",
+        "quarter panel": "aile arriere",
+        "rocker panel": "bas de caisse",
+        "mirror": "retroviseur",
+        "left mirror": "retroviseur gauche",
+        "right mirror": "retroviseur droit",
+        "headlight": "phare",
+        "head lamp": "phare",
+        "front light": "phare avant",
+        "tail light": "feu arriere",
+        "taillight": "feu arriere",
+        "back light": "feu arriere",
+        "grille": "calandre",
+        "wheel": "roue",
+        "tire": "pneu",
+        "tyre": "pneu",
+        "roof": "toit",
+        "trunk": "coffre",
+        "boot": "coffre",
+        "tailgate": "hayon",
+        "license plate": "plaque d'immatriculation",
+        "number plate": "plaque d'immatriculation",
+        "car": "vehicule",
+        "vehicle": "vehicule",
+        "scratch": "rayure",
+        "scratches": "rayures",
+        "dent": "bosselure",
+        "dents": "bosselures",
+        "crack": "fissure",
+        "cracked": "fissure",
+        "glass shatter": "bris de verre",
+        "shattered glass": "bris de verre",
+        "broken glass": "bris de verre",
+        "lamp broken": "feu casse",
+        "broken lamp": "feu casse",
+        "light broken": "feu casse",
+        "broken light": "feu casse",
+        "tire flat": "pneu creve",
+        "flat tire": "pneu creve",
+        "flat tyre": "pneu creve",
+        "broken part": "piece cassee",
+        "missing part": "piece manquante",
+        "paint chip": "peinture ecaillee",
+        "paint damage": "peinture abimee",
+        "flaking": "peinture ecaillee",
+        "corrosion": "corrosion",
+        "damage": "dommage",
+        "damaged": "endommage",
+    }
+    return mapping.get(normalized, normalized)
+
+
 def _translate_part(label):
     mapping = {
         "Back-window": "vitre arriere",
@@ -149,7 +231,7 @@ def _translate_part(label):
         "Mirror": "retroviseur",
         "License-plate": "plaque",
     }
-    return mapping.get(label, label.lower())
+    return mapping.get(label, _translate_label(label))
 
 
 def predictions_for_item(item, task, model_id=None, confidence_threshold=0):
@@ -184,15 +266,15 @@ def predictions_for_item(item, task, model_id=None, confidence_threshold=0):
 def _run_local_model(item, model, confidence_threshold):
     local = local_model_status(model["id"])
     if not local["installed"]:
-        return [], "Model weights are not downloaded locally."
+        return [], "Les poids du modele ne sont pas telecharges localement."
     image_path = _media_path(item["image_url"])
     if not image_path.exists():
-        return [], f"Image file not found: {image_path}"
+        return [], f"Fichier image introuvable : {image_path}"
 
     if local["runner"] == "sam":
         return _run_sam_model(item, model, local, image_path, confidence_threshold)
     if local["runner"] != "yolo":
-        return [], f"Model is downloaded but runner '{local['runner']}' is not implemented."
+        return [], f"Le modele est telecharge, mais le moteur '{local['runner']}' n'est pas implemente."
 
     try:
         from ultralytics import YOLO
@@ -210,7 +292,7 @@ def _run_local_model(item, model, confidence_threshold):
         )
         return _yolo_result_to_predictions(results[0], model), None
     except Exception as exc:
-        return [], f"Local inference failed: {exc}"
+        return [], f"Inference locale echouee : {exc}"
 
 
 def _run_sam_model(item, model, local, image_path, confidence_threshold):
@@ -232,7 +314,7 @@ def _run_sam_model(item, model, local, image_path, confidence_threshold):
         )[0]
         return _sam_result_to_predictions(result, model, prompts, confidence_threshold), None
     except Exception as exc:
-        return [], f"Local SAM inference failed: {exc}"
+        return [], f"Inference locale SAM echouee : {exc}"
 
 
 def _sam_prompts(item, model):
@@ -267,7 +349,7 @@ def _sam_result_to_predictions(result, model, prompts, confidence_threshold):
         predictions.append(
             {
                 "id": f"{model['id']}-{index + 1}",
-                "category": label,
+                "category": _translate_label(label),
                 "bbox": [round(float(value), 1) for value in bbox],
                 "segmentation": segmentation,
                 "confidence": round(confidence, 3),
@@ -305,7 +387,7 @@ def _yolo_result_to_predictions(result, model):
         predictions.append(
             {
                 "id": f"{model['id']}-{index + 1}",
-                "category": str(label).replace("_", " "),
+                "category": _translate_label(label),
                 "bbox": [round(float(value), 1) for value in bbox],
                 "segmentation": segmentation,
                 "confidence": round(confidence, 3),
