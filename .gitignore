@@ -4,6 +4,11 @@ __pycache__/
 .venv/
 venv/
 db.sqlite3
+backend/media/uploads/
+backend/models/**/*.pt
+backend/models/**/*.pth
+backend/models/**/*.h5
+backend/models/**/_hf_cache/
 
 # Node
 node_modules/

@@ -4,7 +4,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = "dev-only-car-damage-annotation-viewer"
 DEBUG = True
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "0.0.0.0", "backend"]
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
