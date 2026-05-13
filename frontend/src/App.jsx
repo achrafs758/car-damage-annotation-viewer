@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Boxes,
   ChevronLeft,
@@ -20,6 +20,8 @@ import {
 const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 const colors = ["#2dd4bf", "#f97316", "#60a5fa", "#e879f9", "#a3e635", "#f43f5e", "#facc15", "#38bdf8"];
 const tasks = ["car_parts", "damage"];
+const labelScreenFontSize = 28;
+const labelScreenStrokeWidth = 6;
 
 function points(segmentation) {
   const polygon = segmentation?.[0];
@@ -52,6 +54,7 @@ function matchesClass(prediction, className) {
 }
 
 export function App() {
+  const stageRef = useRef(null);
   const [registry, setRegistry] = useState(null);
   const [images, setImages] = useState([]);
   const [task, setTask] = useState("car_parts");
@@ -68,6 +71,7 @@ export function App() {
   const [opacity, setOpacity] = useState(45);
   const [threshold, setThreshold] = useState(50);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "dark");
+  const [stageWidth, setStageWidth] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -75,6 +79,15 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!stageRef.current) return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      setStageWidth(entry.contentRect.width);
+    });
+    observer.observe(stageRef.current);
+    return () => observer.disconnect();
+  }, [activeIndex]);
 
   useEffect(() => {
     async function loadInitialWorkspace() {
@@ -119,6 +132,9 @@ export function App() {
   const rawOutputs = useMemo(() => (taskResult?.outputs ?? []).map(decorate), [taskResult]);
   const outputs = modelId === "all" ? rawOutputs : rawOutputs.filter((output) => output.model.id === modelId);
   const activeOutput = outputs.find((output) => output.model.id === selectedModel) ?? outputs[0];
+  const svgScale = activeImage && stageWidth ? stageWidth / activeImage.width : 1;
+  const labelFontSize = labelScreenFontSize / svgScale;
+  const labelStrokeWidth = labelScreenStrokeWidth / svgScale;
 
   const visiblePredictions = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -363,7 +379,7 @@ export function App() {
         </div>
 
         <div className="stage-wrap">
-          <div className="stage" style={{ aspectRatio: `${activeImage.width} / ${activeImage.height}` }}>
+          <div ref={stageRef} className="stage" style={{ aspectRatio: `${activeImage.width} / ${activeImage.height}` }}>
             <img src={imageSrc(activeImage)} alt={activeImage.image_id} draggable="false" />
             <svg viewBox={`0 0 ${activeImage.width} ${activeImage.height}`} aria-label="Predictions IA">
               {visiblePredictions.map((prediction) => {
@@ -384,7 +400,16 @@ export function App() {
                   >
                     {showMasks && <polygon points={points(prediction.segmentation)} fill={prediction.color} fillOpacity={opacity / 100} stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} />}
                     {showBoxes && <rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} strokeDasharray={isSelected ? "0" : "8 5"} />}
-                    {showLabels && <text x={x1 + 4} y={Math.max(18, y1 - 8)} fill={prediction.color}>{prediction.category} {Math.round(prediction.confidence * 100)}%</text>}
+                    {showLabels && (
+                      <text
+                        x={x1 + 4}
+                        y={Math.max(labelFontSize + 4, y1 - 8)}
+                        fill={prediction.color}
+                        style={{ fontSize: labelFontSize, strokeWidth: labelStrokeWidth }}
+                      >
+                        {prediction.category} {Math.round(prediction.confidence * 100)}%
+                      </text>
+                    )}
                   </g>
                 );
               })}
