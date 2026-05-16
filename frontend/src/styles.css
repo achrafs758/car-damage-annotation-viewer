@@ -289,7 +289,7 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   background: var(--panel);
   padding: 14px 24px;
   display: grid;
-  grid-template-columns: 1.1fr 1.4fr 1fr auto;
+  grid-template-columns: 1.1fr 1.2fr 1.4fr auto;
   gap: 18px;
   align-items: center;
 }
@@ -320,6 +320,42 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
   background: var(--accent);
   color: #04110f;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.confidence-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  max-height: 120px;
+  overflow: auto;
+}
+.confidence-row {
+  min-height: 32px;
+  padding: 6px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  justify-content: stretch;
+  text-align: left;
+  gap: 8px;
+  color: var(--muted);
+}
+.confidence-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confidence-row strong {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+.confidence-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.confidence-row.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel-2));
 }
 
 @media (max-width: 1100px) {

@@ -53,6 +53,11 @@ function matchesClass(prediction, className) {
   return predicted === selected || predicted.includes(selected) || selected.includes(predicted);
 }
 
+function matchesAnyClass(prediction, classNames) {
+  if (!classNames.length) return true;
+  return classNames.some((className) => matchesClass(prediction, className));
+}
+
 export function App() {
   const stageRef = useRef(null);
   const [registry, setRegistry] = useState(null);
@@ -63,7 +68,7 @@ export function App() {
   const [predictionCache, setPredictionCache] = useState({});
   const [selectedModel, setSelectedModel] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
-  const [selectedClass, setSelectedClass] = useState("");
+  const [selectedClasses, setSelectedClasses] = useState([]);
   const [query, setQuery] = useState("");
   const [showMasks, setShowMasks] = useState(true);
   const [showBoxes, setShowBoxes] = useState(true);
@@ -146,18 +151,25 @@ export function App() {
     });
   }, [activeOutput, query, threshold]);
 
+  const returnedPredictions = activeOutput?.predictions ?? [];
   const selectedPrediction = visiblePredictions.find((prediction) => prediction.id === selectedId) ?? visiblePredictions[0];
+  const returnedClasses = useMemo(() => (
+    Array.from(new Set(returnedPredictions.map((prediction) => prediction.category))).filter(Boolean)
+  ), [returnedPredictions]);
   const classOptions = useMemo(() => {
     const knownClasses = activeOutput?.model.classes ?? currentModels[0]?.classes ?? [];
-    const predictedClasses = visiblePredictions.map((prediction) => prediction.category);
-    return Array.from(new Set([...predictedClasses, ...knownClasses])).filter(Boolean);
-  }, [activeOutput, currentModels, visiblePredictions]);
+    return Array.from(new Set([...returnedClasses, ...knownClasses])).filter(Boolean);
+  }, [activeOutput, currentModels, returnedClasses]);
 
   useEffect(() => {
     setSelectedModel(null);
     setSelectedId(null);
-    setSelectedClass("");
+    setSelectedClasses([]);
   }, [task, modelId, activeIndex]);
+
+  useEffect(() => {
+    setSelectedClasses(returnedClasses);
+  }, [activeOutput?.model.id, returnedClasses.join("|")]);
 
   async function runAllPredictions(image = activeImage) {
     if (!image) return;
@@ -179,7 +191,7 @@ export function App() {
       }));
       setSelectedModel(nextResults[task]?.outputs?.[0]?.model.id ?? null);
       setSelectedId(null);
-      setSelectedClass("");
+      setSelectedClasses([]);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -239,7 +251,7 @@ export function App() {
       });
       setSelectedId(null);
       setSelectedModel(null);
-      setSelectedClass("");
+      setSelectedClasses([]);
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -258,7 +270,7 @@ export function App() {
     setActiveIndex((current) => Math.max(0, Math.min(current - 1, images.length - 2)));
     setSelectedId(null);
     setSelectedModel(null);
-    setSelectedClass("");
+    setSelectedClasses([]);
   }
 
   function moveImage(direction) {
@@ -390,12 +402,12 @@ export function App() {
                     key={prediction.id}
                     onClick={() => {
                       setSelectedId(prediction.id);
-                      setSelectedClass(prediction.category);
+                      setSelectedClasses([prediction.category]);
                     }}
                     className={[
                       isSelected ? "selected-shape" : "",
-                      selectedClass && !matchesClass(prediction, selectedClass) ? "muted-shape" : "",
-                      selectedClass && matchesClass(prediction, selectedClass) ? "class-highlight-shape" : ""
+                      selectedClasses.length && !matchesAnyClass(prediction, selectedClasses) ? "muted-shape" : "",
+                      selectedClasses.length && matchesAnyClass(prediction, selectedClasses) ? "class-highlight-shape" : ""
                     ].filter(Boolean).join(" ")}
                   >
                     {showMasks && <polygon points={points(prediction.segmentation)} fill={prediction.color} fillOpacity={opacity / 100} stroke={prediction.color} strokeWidth={isSelected ? 4 : 2} />}
@@ -430,8 +442,12 @@ export function App() {
               {classOptions.map((className) => (
                 <button
                   key={className}
-                  className={selectedClass === className ? "class-chip active" : "class-chip"}
-                  onClick={() => setSelectedClass((current) => current === className ? "" : className)}
+                  className={selectedClasses.some((selected) => matchesClass({ category: selected }, className)) ? "class-chip active" : "class-chip"}
+                  onClick={() => setSelectedClasses((current) => (
+                    current.some((selected) => matchesClass({ category: selected }, className))
+                      ? current.filter((selected) => !matchesClass({ category: selected }, className))
+                      : [...current, className]
+                  ))}
                   title={`Mettre en avant : ${className}`}
                 >
                   {className}
@@ -440,11 +456,27 @@ export function App() {
             </div>
           </div>
           <div>
-            <span className="eyebrow">Prediction selectionnee</span>
-            {selectedPrediction ? (
-              <p>{selectedPrediction.category} - logit {selectedPrediction.logit} - confiance {Math.round(selectedPrediction.confidence * 100)}%</p>
+            <span className="eyebrow">Classes et confiances</span>
+            {returnedPredictions.length ? (
+              <div className="confidence-list">
+                {returnedPredictions.map((prediction) => (
+                  <button
+                    key={prediction.id}
+                    className={selectedId === prediction.id ? "confidence-row active" : "confidence-row"}
+                    onClick={() => {
+                      setSelectedId(prediction.id);
+                      setSelectedClasses([prediction.category]);
+                    }}
+                    title={`Selectionner : ${prediction.category}`}
+                  >
+                    <span>{prediction.category}</span>
+                    <strong>{Math.round(prediction.confidence * 100)}%</strong>
+                    <small>logit {prediction.logit}</small>
+                  </button>
+                ))}
+              </div>
             ) : (
-              <p>Aucun masque selectionne.</p>
+              <p>Aucune prediction affichee.</p>
             )}
           </div>
           <button onClick={() => setShowMasks((value) => !value)}>{showMasks ? <EyeOff size={16} /> : <Eye size={16} />} Masques</button>
